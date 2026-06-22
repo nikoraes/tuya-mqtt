@@ -3,6 +3,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [4.0.0]
+### Added
+- Rewritten in TypeScript
+- Home Assistant MQTT Discovery protocol — devices auto-register in HA
+- Template-driven entity mapping (bool → switch, float/int with range → number, etc.)
+- Docker image with multi-stage build
+- GitHub Actions workflow publishing to GHCR
+- Environment variable based MQTT configuration (12-factor app style)
+
+### Changed
+- Removed `json5`, `mathjs`, `debug` dependencies — only 3 runtime deps: `dotenv`, `mqtt`, `tuyapi`
+- Config files now use strict JSON instead of JSON5
+- All `require()` replaced with ES module `import` syntax
+- Device config path configurable via `DEVICES_CONFIG_PATH` env var
+
+### Removed
+- Pre-defined device types (SimpleSwitch, SimpleDimmer, RGBTWLight) — replaced by generic template engine
+- Legacy `config.json` and `hass/status` topic support
+
 ## [3.0.0]
 The 3.0.0 release is a major refactor of the project with significant changes from previous version.  Only major additions and changes are listed below.
 ### Added

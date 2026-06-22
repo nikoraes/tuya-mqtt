@@ -66,7 +66,7 @@ function main(): void {
 
   const deviceConfigs = loadDevices()
 
-  const client = mqtt.connect({ host: mqttHost, port: mqttPort, username: mqttUser, password: mqttPass })
+  const client = mqtt.connect({ host: mqttHost, port: mqttPort, username: mqttUser, password: mqttPass, protocol: mqttPort === 8883 ? 'mqtts' : 'mqtt' })
 
   client.on('connect', () => {
     console.log('[tuya-mqtt] connected to MQTT')
