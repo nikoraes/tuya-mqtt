@@ -146,7 +146,207 @@ export abstract class TuyaDevice {
     this.mqttClient.publish(configTopic, JSON.stringify(payload), { retain: true, qos: 1 })
   }
 
-  async getStates(): Promise<void> {
+  protected publishHaClimateConfig(): void {
+    const climate = this.config.climate
+    if (!climate) return
+
+    const entityName = 'climate'
+    const configTopic = `homeassistant/climate/${this.deviceId}/${entityName}/config`
+
+    const toTopic = (ref: string): string => {
+      const entry = this.deviceTopics[ref]
+      if (!entry) return ''
+      return this.getHaStateTopic(ref, entry)
+    }
+
+    const toCmdTopic = (ref: string): string => {
+      const entry = this.deviceTopics[ref]
+      if (!entry) return ''
+      return this.getHaCommandTopic(ref, entry) || ''
+    }
+
+    const currentTempTopic = toTopic(climate.entities.current_temperature)
+    const targetTempStateTopic = toTopic(climate.entities.target_temperature)
+    const targetTempCmdTopic = toCmdTopic(climate.entities.target_temperature)
+
+    if (!currentTempTopic || !targetTempStateTopic || !targetTempCmdTopic) {
+      console.log('[tuya-mqtt] climate: missing template entity topics, skipping')
+      return
+    }
+
+    // Build preset modes list from config
+    const presetModes: string[] = []
+    if (climate.entities.preset_modes) {
+      presetModes.push('none')
+      for (const haPreset of Object.keys(climate.entities.preset_modes)) {
+        presetModes.push(haPreset)
+      }
+    }
+
+    const payload: HaEntityConfig = {
+      name: climate.name || this.deviceName + ' Climate',
+      unique_id: `${this.deviceId}_climate`,
+      device: {
+        identifiers: [this.deviceId],
+        name: this.deviceName,
+        manufacturer: 'Tuya',
+      },
+      modes: climate.modes,
+      current_temperature_topic: currentTempTopic,
+      temperature_command_topic: targetTempCmdTopic,
+      temperature_state_topic: targetTempStateTopic,
+      mode_command_topic: `homeassistant/climate/${this.deviceId}/climate/mode/set`,
+      mode_state_topic: `homeassistant/climate/${this.deviceId}/climate/mode_state`,
+      min_temp: climate.min_temp || 7,
+      max_temp: climate.max_temp || 35,
+      temp_step: climate.temp_step || 1.0,
+      availability_topic: `homeassistant/sensor/${this.deviceId}/status`,
+      payload_available: 'online',
+      payload_not_available: 'offline',
+    }
+
+    if (presetModes.length > 0) {
+      payload.preset_mode_command_topic = `homeassistant/climate/${this.deviceId}/climate/preset/set`
+      payload.preset_mode_state_topic = `homeassistant/climate/${this.deviceId}/climate/preset_state`
+      payload.preset_modes = presetModes
+    }
+
+    this.mqttClient.publish(configTopic, JSON.stringify(payload), { retain: true, qos: 1 })
+    console.log('[tuya-mqtt] published climate discovery for', this.deviceName)
+  }
+
+  protected getClimateMode(): string {
+    const climate = this.config.climate
+    if (!climate) return 'off'
+
+    const powerRef = climate.entities.power
+    const powerEntry = this.deviceTopics[powerRef]
+    const powerVal = powerEntry ? this.dpsState[powerEntry.key]?.val : undefined
+    if (!powerVal) return 'off'
+
+    // If there's a mode entity, check it has a meaningful value
+    const modeRef = climate.entities.mode
+    if (modeRef) {
+      const modeEntry = this.deviceTopics[modeRef]
+      if (modeEntry) {
+        const modeVal = this.dpsState[modeEntry.key]?.val
+        return modeVal ? 'heat' : 'off'
+      }
+    }
+
+    return 'heat'
+  }
+
+  protected getClimatePreset(): string {
+    const climate = this.config.climate
+    if (!climate || !climate.entities.preset_modes) return 'none'
+
+    for (const [haPreset, entityName] of Object.entries(climate.entities.preset_modes)) {
+      const entry = this.deviceTopics[entityName]
+      if (entry) {
+        const val = this.dpsState[entry.key]?.val
+        if (val) return haPreset
+      }
+    }
+    return 'none'
+  }
+
+  protected publishClimateState(): void {
+    const climate = this.config.climate
+    if (!climate) return
+
+    // Publish climate mode state
+    const mode = this.getClimateMode()
+    this.mqttClient.publish(
+      `homeassistant/climate/${this.deviceId}/climate/mode_state`,
+      mode,
+      { retain: true, qos: 1 },
+    )
+
+    // Publish climate preset state
+    if (climate.entities.preset_modes) {
+      const preset = this.getClimatePreset()
+      this.mqttClient.publish(
+        `homeassistant/climate/${this.deviceId}/climate/preset_state`,
+        preset,
+        { retain: true, qos: 1 },
+      )
+    }
+  }
+
+  protected handleClimateCommand(commandType: string, message: string): void {
+    const climate = this.config.climate
+    if (!climate) return
+
+    if (commandType === 'mode') {
+      this.handleClimateModeCommand(message, climate)
+    } else if (commandType === 'preset') {
+      this.handleClimatePresetCommand(message, climate)
+    }
+  }
+
+  private handleClimateModeCommand(message: string, climate: import('./types').ClimateConfig): void {
+    const msg = message.toLowerCase().trim()
+
+    if (msg === 'off') {
+      // Turn power off
+      const powerRef = climate.entities.power
+      const entry = this.deviceTopics[powerRef]
+      if (entry) {
+        this.set({ dps: entry.key, set: false })
+      }
+      return
+    }
+
+    if (msg === 'heat') {
+      // Turn power on
+      const powerRef = climate.entities.power
+      const powerEntry = this.deviceTopics[powerRef]
+      if (powerEntry) {
+        this.set({ dps: powerEntry.key, set: true })
+      }
+
+      // Optionally set operating mode
+      const modeRef = climate.entities.mode
+      if (modeRef && climate.mode_map && climate.mode_map.heat) {
+        const modeEntry = this.deviceTopics[modeRef]
+        if (modeEntry) {
+          this.set({ dps: modeEntry.key, set: climate.mode_map.heat })
+        }
+      } else if (modeRef) {
+        const modeEntry = this.deviceTopics[modeRef]
+        if (modeEntry) {
+          // Default: try to set operating mode to "warm" or first known heat-like value
+          this.set({ dps: modeEntry.key, set: 'warm' })
+        }
+      }
+    }
+  }
+
+  private handleClimatePresetCommand(message: string, climate: import('./types').ClimateConfig): void {
+    const msg = message.toLowerCase().trim()
+    if (!climate.entities.preset_modes) return
+
+    for (const [haPreset, entityName] of Object.entries(climate.entities.preset_modes)) {
+      const entry = this.deviceTopics[entityName]
+      if (!entry) continue
+
+      if (msg === haPreset) {
+        this.set({ dps: entry.key, set: true })
+        return
+      }
+    }
+
+    // If message doesn't match any preset (e.g. "none"), turn all presets off
+    for (const [, entityName] of Object.entries(climate.entities.preset_modes)) {
+      const entry = this.deviceTopics[entityName]
+      if (entry) {
+        this.set({ dps: entry.key, set: false })
+      }
+    }
+  }
+
+  protected async getStates(): Promise<void> {
     this.connected = false
     for (const topicKey of Object.keys(this.deviceTopics)) {
       const key = this.deviceTopics[topicKey].key
@@ -205,6 +405,9 @@ export abstract class TuyaDevice {
     }
 
     this.publishDpsTopics()
+
+    // Publish climate state updates
+    this.publishClimateState()
   }
 
   publishDpsTopics(): void {
