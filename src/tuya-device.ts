@@ -177,7 +177,6 @@ export abstract class TuyaDevice {
     // Build preset modes list from config
     const presetModes: string[] = []
     if (climate.entities.preset_modes) {
-      presetModes.push('none')
       for (const haPreset of Object.keys(climate.entities.preset_modes)) {
         presetModes.push(haPreset)
       }
