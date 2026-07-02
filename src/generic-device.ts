@@ -51,6 +51,22 @@ export class GenericDevice extends TuyaDevice {
       }
     }
 
+    // Publish climate discovery if configured
+    if (this.config.climate) {
+      this.publishHaClimateConfig()
+
+      // Subscribe to climate command topics
+      const modeCommandTopic = `homeassistant/climate/${this.deviceId}/climate/mode/set`
+      this.mqttClient.subscribe(modeCommandTopic, { qos: 1 }, (err) => {
+        if (err) console.error('[tuya-mqtt:error] subscribe failed', modeCommandTopic, err.message)
+      })
+
+      const presetCommandTopic = `homeassistant/climate/${this.deviceId}/climate/preset/set`
+      this.mqttClient.subscribe(presetCommandTopic, { qos: 1 }, (err) => {
+        if (err) console.error('[tuya-mqtt:error] subscribe failed', presetCommandTopic, err.message)
+      })
+    }
+
     this.mqttClient.subscribe(this.baseTopic + 'command', { qos: 1 })
   }
 
@@ -58,11 +74,19 @@ export class GenericDevice extends TuyaDevice {
     const parts = topic.split('/')
     if (parts.length >= 5 && parts[0] === 'homeassistant') {
       const deviceId = parts[2]
-      const entityName = parts[3]
 
-      if (deviceId === this.deviceId && parts[4] === 'set') {
-        console.log('[tuya-mqtt:command] HA command for', entityName, message)
-        this.handleHaCommand(entityName, message)
+      // Handle template entity commands: homeassistant/{component}/{deviceId}/{entityName}/set
+      if (parts.length === 5 && deviceId === this.deviceId && parts[4] === 'set') {
+        console.log('[tuya-mqtt:command] HA command for', parts[3], message)
+        this.handleHaCommand(parts[3], message)
+        return
+      }
+
+      // Handle climate commands: homeassistant/climate/{deviceId}/climate/{type}/set
+      if (parts.length === 6 && deviceId === this.deviceId && parts[3] === 'climate' && parts[5] === 'set') {
+        console.log('[tuya-mqtt:command] HA climate command for', parts[4], message)
+        this.handleClimateCommand(parts[4], message)
+        return
       }
     } else if (topic === this.baseTopic + 'command' && message === 'get-states') {
       this.getStates()

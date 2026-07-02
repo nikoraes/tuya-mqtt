@@ -79,6 +79,62 @@ The template engine maps each entry to a Home Assistant MQTT entity:
 | `str`                  | `sensor`     | String value display        |
 | `str` (with options)   | `select`     | Dropdown selection          |
 
+### Climate Entity (Heat Pump / Thermostat)
+
+For heat pumps, pool heaters, or any HVAC device, you can add a **climate entity** that presents a unified thermostat dial in Home Assistant. This publishes an MQTT climate discovery config alongside the individual template entities.
+
+Add a `climate` section to your device config:
+
+```json
+{
+  "name": "Pool Heater",
+  "id": "***",
+  "key": "***",
+  "ip": "192.168.1.55",
+  "version": "3.3",
+  "template": {
+    "power": { "key": 1, "type": "bool" },
+    "current_temperature": { "key": 102, "type": "float" },
+    "set_temperature": { "key": 106, "type": "float", "topicMin": 18, "topicMax": 45 },
+    "operating_mode": { "key": 105, "type": "str" },
+    "boost": { "key": 117, "type": "bool" }
+  },
+  "climate": {
+    "name": "Pool Heat Pump",
+    "modes": ["off", "heat"],
+    "mode_map": { "heat": "warm" },
+    "min_temp": 18,
+    "max_temp": 45,
+    "temp_step": 0.5,
+    "entities": {
+      "current_temperature": "current_temperature",
+      "target_temperature": "set_temperature",
+      "power": "power",
+      "mode": "operating_mode",
+      "preset_modes": { "boost": "boost" }
+    }
+  }
+}
+```
+
+**Climate config options:**
+
+| Option | Type | Description |
+| ------ | ---- | ----------- |
+| `name` | string | Display name for the climate entity (defaults to device name) |
+| `modes` | string[] | Supported HVAC modes, e.g. `["off", "heat"]` |
+| `mode_map` | object | Maps HA mode names to Tuya operating_mode values, e.g. `{ "heat": "warm" }` |
+| `min_temp` | number | Minimum target temperature |
+| `max_temp` | number | Maximum target temperature |
+| `temp_step` | number | Temperature step (default: 1.0) |
+| `entities.current_temperature` | string | Template entity name for current temperature sensor |
+| `entities.target_temperature` | string | Template entity name for set temperature number |
+| `entities.power` | string | Template entity name for power switch |
+| `entities.mode` | string | Template entity name for operating mode sensor (optional) |
+| `entities.preset_modes` | object | Map of HA preset names to template entity names, e.g. `{ "boost": "boost" }` |
+
+The climate entity reads `current_temperature` and `target_temperature` from the same MQTT topics as the template entities. HVAC mode commands are translated: `off` sets the power switch off, `heat` sets power on and optionally sets the operating mode via `mode_map`.
+
 ### Template Options
 
 | Option        | Type     | Description                                                               |
