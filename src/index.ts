@@ -68,6 +68,8 @@ function main(): void {
 
   const client = mqtt.connect({ host: mqttHost, port: mqttPort, username: mqttUser, password: mqttPass, protocol: mqttPort === 8883 ? 'mqtts' : 'mqtt' })
 
+  console.log(`[tuya-mqtt] connecting to ${mqttHost}:${mqttPort} (protocol: ${mqttPort === 8883 ? 'mqtts' : 'mqtt'}, username: ${mqttUser ? '✓' : '✗'})`)
+
   client.on('connect', () => {
     console.log('[tuya-mqtt] connected to MQTT')
     client.subscribe(topicPrefix + '/#')
