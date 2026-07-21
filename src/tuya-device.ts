@@ -32,6 +32,10 @@ export abstract class TuyaDevice {
   protected deviceName: string
   protected readonly deviceId: string
 
+  protected connectFailures = 0
+  protected readonly maxBackoff = 300 // 5 minutes
+  protected readonly maxConnectAttempts = 5 // recreate device after this many consecutive failures
+
   constructor(config: DeviceConfig, mqttClient: MqttClient, topicPrefix: string) {
     this.config = config
     this.mqttClient = mqttClient
@@ -52,7 +56,12 @@ export abstract class TuyaDevice {
     this.baseTopic = `${topicPrefix}${this.options.name || config.id}/`
 
     this.device = new TuyAPI(JSON.parse(JSON.stringify(this.options)))
+    this.setupEventListeners()
+    this.connectDevice()
+    this.monitorHeartbeat()
+  }
 
+  protected setupEventListeners(): void {
     this.device.on('data', (raw) => {
       if (raw && typeof raw === 'object') {
         const data = raw as { dps?: Record<string, unknown> }
@@ -73,6 +82,7 @@ export abstract class TuyaDevice {
       if (this.device.isConnected()) {
         console.log('[tuya-mqtt] connected to', this.toString())
         this.connected = true
+        this.connectFailures = 0 // Reset failure counter on successful connect
         this.heartbeatsMissed = 0
         this.publishAvailability('online')
         this.init()
@@ -95,9 +105,6 @@ export abstract class TuyaDevice {
     this.device.on('heartbeat', () => {
       this.heartbeatsMissed = 0
     })
-
-    this.connectDevice()
-    this.monitorHeartbeat()
   }
 
   protected abstract init(): Promise<void>
@@ -683,30 +690,62 @@ export abstract class TuyaDevice {
     return hex + hsb
   }
 
-  protected connectDevice(): void {
+  protected async connectDevice(): Promise<void> {
     console.log('[tuya-mqtt] searching for', this.options.id)
-    this.device.find().then(() => {
+    try {
+      await this.device.find()
       console.log('[tuya-mqtt] found', this.options.id)
-      this.device.connect().catch((error: Error) => {
-        console.error('[tuya-mqtt:error]', error.message)
+      try {
+        await this.device.connect()
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error)
+        console.error('[tuya-mqtt:error]', msg)
         this.reconnect()
-      })
-    }).catch(async (error: Error) => {
-      console.error('[tuya-mqtt:error]', error.message)
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error)
+      console.error('[tuya-mqtt:error]', msg)
       console.log('[tuya-mqtt] retry in 60s')
       await sleep(60)
       this.connectDevice()
-    })
+    }
   }
 
   protected async reconnect(): Promise<void> {
-    if (!this.reconnecting) {
-      this.reconnecting = true
-      console.log('[tuya-mqtt] reconnecting', this.options.id)
-      await sleep(10)
-      this.connectDevice()
-      this.reconnecting = false
+    if (this.reconnecting) return
+    this.reconnecting = true
+
+    this.connected = false
+    this.publishAvailability('offline')
+
+    this.connectFailures++
+
+    // Exponential backoff: 10s, 20s, 40s, 80s, 160s, 300s (cap)
+    const backoff = Math.min(10 * Math.pow(2, this.connectFailures - 1), this.maxBackoff)
+    console.log(
+      '[tuya-mqtt] reconnecting', this.toString(),
+      `(attempt ${this.connectFailures}, waiting ${backoff}s)`,
+    )
+
+    // Disconnect old device to flush stale TCP state
+    try { this.device.disconnect() } catch { /* ignore */ }
+
+    await sleep(backoff)
+
+    // After several consecutive failures, recreate the TuyAPI instance
+    // This fully resets the TCP/socket state — the root fix for ECONNRESET loops
+    if (this.connectFailures > this.maxConnectAttempts) {
+      console.log('[tuya-mqtt] recreating device object for', this.options.id,
+        '(too many connection failures)')
+      this.device.removeAllListeners()
+      this.device = new TuyAPI(JSON.parse(JSON.stringify(this.options)))
+      this.setupEventListeners()
+      this.connectFailures = 0 // restarted with fresh state
     }
+
+    this.connectDevice().finally(() => {
+      this.reconnecting = false
+    })
   }
 
   disconnect(): void {
