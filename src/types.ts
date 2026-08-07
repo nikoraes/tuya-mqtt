@@ -8,6 +8,10 @@ export interface TemplateEntry {
   commandMath?: string
   components?: string
   options?: string[]
+  /** Optional HA device_class for the sensor (e.g. "power"). */
+  device_class?: string
+  /** Optional unit_of_measurement for the sensor (e.g. "W"). */
+  unit_of_measurement?: string
 }
 
 export interface ClimateEntityRefs {

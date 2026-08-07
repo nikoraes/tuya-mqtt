@@ -146,6 +146,15 @@ export abstract class TuyaDevice {
       payload.step = entry.type === 'float' ? 0.5 : 1
       payload.mode = 'box'
     }
+    if (component === 'sensor') {
+      // Numeric sensors need these to be chartable/aggregable in HA history.
+      if (entry.type === 'int' || entry.type === 'float') {
+        payload.state_class = 'measurement'
+      }
+    }
+    // Optional per-entity semantic hints (defined in the template config).
+    if (entry.device_class) payload.device_class = entry.device_class
+    if (entry.unit_of_measurement) payload.unit_of_measurement = entry.unit_of_measurement
     if (component === 'select' && entry.options) {
       payload.options = entry.options
     }
